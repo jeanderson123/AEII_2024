@@ -1,0 +1,220 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from datetime import datetime, timedelta
+import json
+import os
+
+class GestaoHorta:
+    def __init__(self, arquivo_dados='horta_dados.json'):
+        self.arquivo_dados = arquivo_dados
+        self.culturas = [("Tomate", 90, "01/03/2024", "01/06/2024"),
+                         ("Alface", 45, "01/04/2024", "16/05/2024"),
+                         ("Cenoura", 70, "01/03/2024", "10/05/2024")]
+        self.adubos = [("Adubo Orgânico", 10, "10/08/2024"), ("Adubo Químico", 5, "15/09/2024")]
+        self.irrigacoes = [("Tomate", "00:30:00"), ("Alface", "00:45:00"), ("Cenoura", "01:00:00")]
+        self.carregar_dados()
+
+    def carregar_dados(self):
+        if os.path.exists(self.arquivo_dados):
+            with open(self.arquivo_dados, 'r') as f:
+                dados = json.load(f)
+                self.culturas = dados.get('culturas', self.culturas)
+                self.adubos = dados.get('adubos', self.adubos)
+                self.irrigacoes = dados.get('irrigacoes', self.irrigacoes)
+
+    def salvar_dados(self):
+        dados = {
+            'culturas': self.culturas,
+            'adubos': self.adubos,
+            'irrigacoes': self.irrigacoes,
+        }
+        with open(self.arquivo_dados, 'w') as f:
+            json.dump(dados, f)
+
+
+class OperacoesCRUD:
+    def __init__(self, arvore):
+        self.arvore = arvore
+
+    def adicionar_item(self):
+        self.janela_edicao("Adicionar Item", editar=False)
+
+    def editar_item(self):
+        if not self.arvore.selection():
+            messagebox.showwarning("Seleção necessária", "Por favor, selecione um item para editar.")
+            return
+        self.janela_edicao("Editar Item", editar=True)
+
+    def excluir_item(self):
+        if not self.arvore.selection():
+            messagebox.showwarning("Seleção necessária", "Por favor, selecione um item para excluir.")
+            return
+        self.arvore.delete(self.arvore.selection()[0])
+
+    def janela_edicao(self, titulo, editar):
+        janela = tk.Toplevel(self.arvore)
+        janela.title(titulo)
+
+        colunas = self.arvore.cget("columns")
+        colunas_editaveis = [col for col in colunas if col != "Fim do plantio (esperado)"]
+        entradas = {col: ttk.Entry(janela) for col in colunas_editaveis}
+        for i, col in enumerate(colunas_editaveis):
+            ttk.Label(janela, text=col).grid(row=i, column=0, padx=5, pady=5)
+            entradas[col].grid(row=i, column=1, padx=5, pady=5)
+
+        if editar:
+            item_selecionado = self.arvore.selection()[0]
+            valores = self.arvore.item(item_selecionado, "values")
+            for col, entrada in zip(colunas_editaveis, entradas.values()):
+                entrada.insert(0, valores[colunas.index(col)])
+
+        def salvar_dados():
+            valores = []
+            for col in colunas:
+                if col in entradas:
+                    entrada = entradas[col]
+                    if not entrada.get().strip():
+                        messagebox.showerror("Erro", "Todos os campos devem ser preenchidos.")
+                        return
+                    valores.append(entrada.get())
+                else:
+                    # Calcula o "Fim do plantio (esperado)"
+                    inicio_plantio = datetime.strptime(entradas["Início do Plantio"].get(), "%d/%m/%Y")
+                    tempo_colheita = int(entradas["Tempo de Colheita (dias)"].get())
+                    fim_plantio = (inicio_plantio + timedelta(days=tempo_colheita)).strftime("%d/%m/%Y")
+                    valores.append(fim_plantio)
+
+            if editar:
+                self.arvore.item(self.arvore.selection()[0], values=valores)
+            else:
+                self.arvore.insert("", "end", values=valores)
+            janela.destroy()
+
+        ttk.Button(janela, text="Salvar", command=salvar_dados).grid(row=len(colunas_editaveis), column=0, columnspan=2, pady=5)
+
+    def excluir_item_arvore(self):
+        item_selecionado = self.arvore.selection()
+        if item_selecionado:
+            self.arvore.delete(item_selecionado[0])
+
+
+class AplicativoHorta:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Gestão de Hortas Comunitárias")
+
+        self.dados = GestaoHorta()
+        self.crud = None
+
+        self.criar_interface_principal()
+
+    def criar_interface_principal(self):
+        quadro_principal = ttk.Frame(self.root)
+        quadro_principal.grid(row=0, column=0, padx=10, pady=10)
+
+        self.criar_interface_culturas(quadro_principal)
+        self.criar_interface_adubos_irrigacao(quadro_principal)
+
+    def criar_interface_culturas(self, parent):
+        quadro = ttk.LabelFrame(parent, text="Gestão de Culturas")
+        quadro.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+
+        colunas = ("Cultura", "Tempo de Colheita (dias)", "Início do Plantio", "Fim do plantio (esperado)")
+        self.culturas_arvore = self.criar_arvore(quadro, colunas)
+        for cultura in self.dados.culturas:
+            self.culturas_arvore.insert("", "end", values=cultura)
+
+        self.crud = OperacoesCRUD(self.culturas_arvore)
+        self.criar_botoes_crud(quadro, self.crud, row=1)
+
+    def criar_interface_adubos_irrigacao(self, parent):
+        quadro = ttk.Frame(parent)
+        quadro.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+
+        self.criar_interface_adubos(quadro)
+        self.criar_interface_irrigacao(quadro)
+
+    def criar_interface_adubos(self, parent):
+        quadro = ttk.LabelFrame(parent, text="Estoque de Adubos")
+        quadro.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+
+        colunas = ("Adubo", "Quantidade", "Prazo de Validade")
+        self.adubos_arvore = self.criar_arvore(quadro, colunas)
+        for adubo in self.dados.adubos:
+            self.adubos_arvore.insert("", "end", values=adubo)
+
+        self.crud = OperacoesCRUD(self.adubos_arvore)
+        self.criar_botoes_crud(quadro, self.crud, row=1)
+
+    def criar_interface_irrigacao(self, parent):
+        quadro = ttk.LabelFrame(parent, text="Agendamento de Irrigação")
+        quadro.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+
+        colunas = ("Cultura", "Tempo de Irrigação", "Tempo Restante")
+        self.irrigacao_arvore = self.criar_arvore(quadro, colunas)
+        for irrigacao in self.dados.irrigacoes:
+            self.irrigacao_arvore.insert("", "end", values=(irrigacao[0], irrigacao[1], ""))
+
+        self.irrigacao_arvore.bind("<Double-1>", self.on_double_click)
+
+        self.botao_iniciar = ttk.Button(quadro, text="Iniciar", command=self.iniciar_irrigacao)
+        self.botao_iniciar.grid(row=1, column=0, padx=5, pady=5)
+
+        self.crud = OperacoesCRUD(self.irrigacao_arvore)
+        self.criar_botoes_crud(quadro, self.crud, row=1, start_column=1)
+
+    def criar_arvore(self, parent, colunas):
+        arvore = ttk.Treeview(parent, columns=colunas, show="headings")
+        for col in colunas:
+            arvore.heading(col, text=col)
+        arvore.grid(row=0, column=0, columnspan=len(colunas), padx=10, pady=10)
+        return arvore
+
+    def criar_botoes_crud(self, quadro, crud, row, start_column=0):
+        ttk.Button(quadro, text="Adicionar", command=crud.adicionar_item).grid(row=row, column=start_column, padx=5, pady=5)
+        ttk.Button(quadro, text="Editar", command=crud.editar_item).grid(row=row, column=start_column+1, padx=5, pady=5)
+        ttk.Button(quadro, text="Excluir", command=crud.excluir_item).grid(row=row, column=start_column+2, padx=5, pady=5)
+
+    def iniciar_irrigacao(self):
+        item_selecionado = self.irrigacao_arvore.selection()
+        if not item_selecionado:
+            messagebox.showwarning("Seleção necessária", "Por favor, selecione uma irrigação para iniciar.")
+            return
+
+        item = item_selecionado[0]
+        valores = self.irrigacao_arvore.item(item, "values")
+
+        if len(valores) < 3:
+            messagebox.showerror("Erro", "Item de irrigação incompleto. Por favor, edite e forneça todos os campos.")
+            return
+
+        cultura, tempo, _ = valores
+
+        try:
+            horas, minutos, segundos = map(int, tempo.split(":"))
+            total_segundos = horas * 3600 + minutos * 60 + segundos
+
+            def contagem_regressiva(contagem):
+                if contagem >= 0:
+                    horas_restantes, resto = divmod(contagem, 3600)
+                    minutos_restantes, segundos_restantes = divmod(resto, 60)
+                    self.irrigacao_arvore.set(item, "Tempo Restante", f"{int(horas_restantes):02d}:{int(minutos_restantes):02d}:{int(segundos_restantes):02d}")
+                    self.root.after(1000, contagem_regressiva, contagem - 1)
+                else:
+                    messagebox.showinfo("Irrigação Concluída", f"A irrigação para {cultura} foi concluída.")
+                    self.irrigacao_arvore.set(item, "Tempo Restante", "")
+
+            contagem_regressiva(total_segundos)
+        except ValueError:
+            messagebox.showerror("Erro", "Formato de tempo inválido. Use HH:MM:SS.")
+
+    def on_double_click(self, event):
+        item = self.irrigacao_arvore.identify_row(event.y)
+        if item:
+            self.irrigacao_arvore.selection_set(item)
+            self.iniciar_irrigacao()
+
+# Executar o aplicativo
+root = tk.Tk()
+app = AplicativoHorta(root)
+root.mainloop()
